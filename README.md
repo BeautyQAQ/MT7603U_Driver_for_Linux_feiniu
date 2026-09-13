@@ -1,217 +1,162 @@
-# MT7603U USB WiFi Driver
+# 飞牛 NAS / 360 随身 WiFi 热点
 
-Linux driver for MT7603U USB wireless adapters based on the Ralink vendor driver, adapted for **Ubuntu 24.04 LTS (kernel 6.8 ~ 6.17+)**.
+本仓库包含驱动源码和飞牛 NAS 热点管理工具。本机工程目录为 `/home/ubuntu/project/nas-wifi`，
+克隆到其他目录也可以使用。
 
-> Driver version: `JEDI.L0.MP1.mt7603u.v1.14` (from `include/os/rt_linux.h`)
+设备为 **MT7603U / USB 0e8d:760c**。已在飞牛 `6.18.18.c1032-trim` 上完成驱动加载、
+WPA2 热点、手机获取 DHCP 地址和上网验证。源码、补丁、编译目录、产物和运行工具都保存在
+本工程中，不依赖之前的 `/tmp` 目录。
 
-[中文文档](README_zh.md)
+这里提供手动管理脚本：不安装开机服务、不设置模块自动加载、不运行一天测试。
+启动后没有 30 分钟期限，持续到手动停止或 NAS 重启。
 
----
+## 日常使用
 
-## Supported Devices
-
-| USB ID | Chipset | Tested Device |
-|--------|---------|---------------|
-| `0e8d:760c` | MT7603U | 360 Portable WiFi 3 |
-| `0e8d:7603` | MT7603U | Generic MT7603U devices |
-
-Other potentially compatible devices (untested):
-- ogemray GWF-1D07 / GWF-1M02
-- comfast CF-WU825N V2
-- lb-link BL-WN620A(7603) / BL-M7603NU1
-- mercury MW300UM V4
-
-Additional USB IDs can be added in `common/rtusb_dev_id.c`.
-
----
-
-## Quick Install (Recommended)
-
-### Option 1: Direct Install
-
-> Current built kernel version: `6.17.0-14-generic` (run `uname -r` to check yours)
+首次克隆后，先创建本地配置，修改热点名称、密码和网络参数，再编译当前内核的驱动：
 
 ```bash
-git clone https://github.com/Looong01/MT7603U_Driver_for_Linux.git
-cd MT7603U_Driver_for_Linux
-sudo bash install.sh
+git clone git@github.com:BeautyQAQ/MT7603U_Driver_for_Linux_feiniu.git
+cd MT7603U_Driver_for_Linux_feiniu
+install -m 600 config/hotspot.ini.example config/hotspot.ini
+# 编辑 config/hotspot.ini，设置自己的密码和网络参数
+./build.sh
+./check.sh
 ```
 
-### Option 2: DKMS Install (auto-recompiles after kernel updates)
+真实配置、日志、运行状态和本地构建产物不提交到 Git。后续命令在自己的克隆目录内执行。
 
 ```bash
-git clone https://github.com/Looong01/MT7603U_Driver_for_Linux.git
-cd MT7603U_Driver_for_Linux
-sudo bash dkms-install.sh
+cd /home/ubuntu/project/nas-wifi
+
+./check.sh           # 只读：检查配置、内核、驱动产物和工具
+sudo ./start.sh      # 必要时加载驱动，然后启动热点
+./status.sh         # 查看服务状态、热点状态、手机授权信息和 DHCP 租约
+sudo ./stop.sh       # 关闭热点，撤销本工程添加的网络规则，驱动保留在内存
+sudo ./restart.sh    # 检查配置后重启热点，让修改后的配置生效
+sudo ./unload.sh     # 关闭热点并卸载驱动，不强制卸载使用中的模块
 ```
 
-### Uninstall
+`start.sh` 成功时明确显示“热点已启用”，不会仅凭后台进程创建成功就报告热点可用。
+如之前的 `nas-wifi-test.service` 仍在运行，`start.sh` 会先停止它，再由本工程接管，
+切换期间手机会短暂断线；`stop.sh` 也能关闭旧测试服务。
+
+脚本用 **临时 systemd 服务 `nas-wifi.service`** 管理后台进程，方便退出 SSH 后继续使用。
+没有写入 `/etc/systemd/system`，没有执行 `systemctl enable`，NAS 重启后需手动运行 `start.sh`。
+自动重启失败进程也未启用，避免不稳定驱动反复重试。
+
+`stop.sh` 关闭的是热点；如希望驱动也不再运行，使用 `unload.sh`。
+卸载时会让 NetworkManager 释放该网卡再关闭接口；不使用强制卸载。
+如果驱动仍被占用或卸载失败，脚本会报告错误，不伪报成功。
+
+## 修改名称和密码
+
+编辑 **`config/hotspot.ini`**。首次使用时按上面的命令从模板创建，权限为仅当前用户及 root 可读取；
+本机已有配置可继续使用。
+
+```ini
+[wifi]
+ssid = 我的NAS热点
+password = YourNewPassword123
+channel = 6
+```
+
+- SSID 长度为 1–32 个 UTF-8 字节；中文通常每字 3 字节。
+- WPA2 密码为 8–63 个可打印 ASCII 字符，可以包含 `%`、`#` 等符号。
+- 不要在值后面追加行内注释；不支持换行密码或换行 SSID。
+- 当前配置是 2.4 GHz / WPA2-PSK / CCMP，信道限定为 1–11。
+- 修改后先运行 `./check.sh`，再运行 `sudo ./restart.sh`。
+- `config/hotspot.ini.example` 是不含真实密码的模板。
+
+`[network]` 内还可以修改有线出口、热点网关/网段、DHCP 地址池和 DNS。
+默认出口 `enp1s0`，热点网关 `192.168.77.1/24`，地址池 `.100`–`.120`，DNS `192.168.4.1`。
+启动前会检查与现有主路由表的子网冲突，避免覆盖原地址。
+
+默认 `bypass_mihomo = true`，仅热点流量走有线接口直接共享网络。
+本工程只添加带 `nas-wifi` 注释的 NAT/转发规则、两条独立策略路由（优先级 8000/8001），
+以及存在 Mihomo 时对本热点接口的例外规则。正常停止会逐项撤销，不整体还原旧防火墙快照，
+也不清空 Docker 或其他服务的规则。网卡按 USB ID 自动识别，不依赖 `wlx...` 名称或 `phy0`。
+
+已验证此驱动需要等待 NetworkManager 的异步释放结束；脚本保留了 5 秒等待。
+必须已经开启 IPv4 转发（这台 NAS 当前为 1）；若其他网络服务将其关闭，脚本会报告原因，
+不会擅自修改全局转发设置。
+
+## 飞牛更新内核后
+
+每次 `start.sh` / `restart.sh` 都会核对运行内核、对应产物的 `vermagic` 和 SHA-256 构建记录。
+没有当前内核的产物或版本不匹配时，会在加载驱动和中断现有热点之前停止。
 
 ```bash
-sudo bash uninstall.sh
+cd /home/ubuntu/project/nas-wifi
+uname -r
+./check.sh
+./build.sh           # 为当前运行的内核重新编译，不需要 sudo
+./check.sh
+sudo ./start.sh
 ```
 
----
+编译需要 `/lib/modules/$(uname -r)/build` 指向**完全匹配该飞牛内核的 headers**。
+若缺失，应先安装对应飞牛版本的内核头文件，不能拿通用 Debian 内核 headers 替代。
+脚本不会自行升级内核、下载并安装不明驱动，也不会自动执行需要兼容性修正的补丁。
+新内核 API 如果再次变化，编译可能失败；此时日志和源码会保留，现有产物不会被替换。
 
-## Manual Build & Install
+也可先为已安装 headers 的目标内核编译：`./build.sh 内核版本`。
 
-### 1. Prerequisites
+产物按内核分开保存：
 
-| Item | Requirement |
-|------|-------------|
-| OS | Ubuntu 24.04 LTS (Noble Numbat) |
-| Kernel | 6.8+ (tested on 6.17.0-14-generic) |
-| Build tools | gcc, make, build-essential |
-| Kernel headers | linux-headers-$(uname -r) |
+```text
+build/<内核版本>/mt7603usta.ko  驱动模块
+build/<内核版本>/build.json    内核版本、源码提交、补丁摘要和产物校验值
+build/<内核版本>/build.log     编译日志
+build/<内核版本>/work-*/       此次编译使用的独立工作目录
+```
 
-Install dependencies:
+编译不会热替换内存中已加载的驱动。如果重新编译后要立即切换到新产物：
 
 ```bash
-sudo apt update
-sudo apt install build-essential linux-headers-$(uname -r)
+sudo ./unload.sh
+sudo ./start.sh
 ```
 
-### 2. Build
+`start.sh` 会复用当前已加载的同名驱动；发现它与磁盘产物源码版本不同会提示，
+不会为了切换构建产物自行强制卸载正常使用中的驱动。
 
-```bash
-make clean
-make KSRC=/lib/modules/$(uname -r)/build DARK_MODE=NO -j$(nproc)
-```
+## 工程内容
 
-> **Note**: The `DARK_MODE=NO` flag is required. Otherwise the driver will use `0x0DDF` instead of `0x760C` as the USB ID, preventing devices like the 360 Portable WiFi from being recognized.
+| 路径 | 内容 |
+|---|---|
+| `driver/` | 保留上游内容并应用兼容性修正的驱动源码；与热点工具由根目录 Git 仓库统一管理 |
+| `patches/local-driver.patch` | Linux 6.13+ 监听信道回调兼容修正、重复编译的 ID 配置修正 |
+| `firmware/` | 已验证使用的驱动配置文件和固件 |
+| `bin/` | Debian 12 amd64 的 iw、hostapd、hostapd_cli；使用系统动态库 |
+| `lib/` | 配置检查、编译、驱动加载和热点管理代码 |
+| `config/` | 用户配置和模板 |
+| `logs/` | hostapd、dnsmasq 及失败诊断日志 |
+| `state/` | 当前/最近运行状态和本工程创建的固件记录 |
+| `tests/` | 无需 root、不会修改网络的检查测试 |
 
-After a successful build, the driver module is located at `os/linux/mt7603usta.ko`.
+从任何工作目录执行这些 shell 脚本都可以；脚本自行定位工程。
+请勿在运行期间移动工程目录。
 
-### 3. Install Firmware
+`unload.sh` 只删除由本工程创建且内容未变的 `/lib/firmware` 文件；之前测试已经安装的
+同名相同固件会复用而不覆盖，原有文件不会被本工程误删。工程文件本身会保留。
 
-```bash
-sudo cp mt7603_firmware/MT7603USTA.dat /lib/firmware/
-sudo cp mt7603_firmware/mt7603_e2.bin /lib/firmware/
-```
+## 验证记录与限制
 
-### 4. Install and Load the Driver
+- 旧临时测试：2026-09-13 手机完成 WPA2 认证，获取 `192.168.77.104`，用户确认上网可用。
+- 本工程：已从持久目录重新编译当前内核模块，并通过配置/版本检查与 11 项自动检查。
+- 新工程脚本尚需由用户在 NAS 终端执行一次 `sudo ./start.sh` 完成运行验证；当前执行账号
+  无免密 sudo，密码仅应输入 NAS 终端。
+- 没有做一天稳定性测试，也没有进行 NAS 重启测试或设置开机启动。
+- 第三方模块运行于内核中，崩溃可能影响整台 NAS；用户已确认可以接受测试风险并手动重启。
+  手动启动模式下重启不会自动加载它，但不能保证正在写入的数据不受崩溃影响。
 
-```bash
-# Copy the driver to the system modules directory
-sudo cp os/linux/mt7603usta.ko /lib/modules/$(uname -r)/kernel/drivers/net/wireless/
-sudo depmod -a
+验证命令：`python3 -m unittest discover -s tests -v`。
 
-# Load the driver
-sudo modprobe mt7603usta
-```
+上游：https://github.com/Looong01/MT7603U_Driver_for_Linux
 
-Or load temporarily without installing to the system directory (lost after reboot):
+上游基础提交：`1125639b7aef82bb821315a0ebd51f9ad104d7a5`。
 
-```bash
-sudo insmod os/linux/mt7603usta.ko
-```
+本工程 fork：https://github.com/BeautyQAQ/MT7603U_Driver_for_Linux_feiniu 。
 
-### 5. Verify
-
-```bash
-# Check if the driver is loaded
-lsmod | grep mt7603usta
-
-# Check network interfaces (a wlx* interface should appear)
-ip link show
-
-# Scan for WiFi networks
-nmcli device wifi list
-
-# Connect to a WiFi network
-nmcli device wifi connect "SSID" password "your_password"
-```
-
----
-
-## Kernel Adaptation Notes (6.8+ Kernel Changes)
-
-This driver is based on the legacy Ralink vendor driver. The following changes were needed to port it to newer kernels:
-
-| File | Changes |
-|------|---------|
-| `os/linux/Makefile.6` | Added `ccflags-y += $(EXTRA_CFLAGS)` (newer kernels no longer implicitly pass EXTRA_CFLAGS) |
-| `include/os/rt_linux.h` | `asm/uaccess.h` → `linux/uaccess.h`, `asm/unaligned.h` → `linux/unaligned.h` |
-| `os/linux/rt_linux.c` | `del_timer_sync()` → `timer_delete_sync()` |
-| `os/linux/cfg80211/cfg80211.c` | Adapted cfg80211 callback signature changes: added `link_id` to `tdls_mgmt`, `change_beacon` now uses `cfg80211_ap_update`, added `net_device` to `set_monitor_channel`, added `radio_idx` to `set_wiphy_params` |
-
----
-
-## Troubleshooting
-
-### No Network Interface After Loading
-
-```bash
-# Check dmesg logs
-sudo dmesg | grep -iE "mt7603\|mt_drv\|error"
-
-# Try re-plugging the USB device, then:
-sudo modprobe mt7603usta
-
-# Or restart NetworkManager
-sudo systemctl restart NetworkManager
-```
-
-### Build Fails: Kernel Headers Not Found
-
-```bash
-sudo apt install linux-headers-$(uname -r)
-```
-
-### Unload the Driver
-
-```bash
-sudo rmmod mt7603usta      # Temporary unload (files remain, can reload with modprobe after reboot)
-sudo bash uninstall.sh     # Full uninstall
-```
-
-### Kernel Panic
-
-This driver is based on legacy vendor code and may cause kernel panics in extreme cases. Hold the power button to force a reboot to recover. If you installed using `install.sh`, you can run `sudo bash uninstall.sh` after rebooting to uninstall.
-
----
-
-## Build for OpenWRT
-
-Use `Makefile.backports` as the Makefile. After compiling and loading `mt7603usta.ko`, the netifd script will not work in OpenWRT. To start an AP, create a config file like `hostapd.conf`, then use the hostapd command manually.
-
----
-
-## Original Information
-
-- Upstream repository: [GitLab](https://gitlab.com/ChalesYu/buildroot_platform_hardware_wifi_mtk_drivers_mt7603)
-- mt7603u branch: `pub-test-v20220304`
-- mt7601u branch: `mt7601u` (driver version `JEDI.MP1.mt7601u.v1.11`)
-- Firmware source: [OpenWRT mt76](https://github.com/openwrt/mt76/tree/master/firmware)
-- This driver will no longer be needed once the mainline mt76 driver supports MT7603U USB
-
-
-### Test New USB Device ID
-
-If a USB device is based on mt7603u and device id is `0E8D:0DDF` .
-
-After insmod mt7603usta.ko , need to :
-
-```
-echo 0E8D 0DDF > /sys/bus/usb/drivers/mt_drv/new_id
-```
-
-to make driver actually load and work.
-
-
-### Disable Dark Mode
-
-This driver enabled Dark Mode as default.
-
-A way to disabled it
-
-```
-sed -i '1s/#define/\/\/#define/g'  common/rtusb_dev_id.c
-```
-
-Or use a more easy way when compile
-
-```
-make KSRC=/lib/modules/$(uname -r)/build  DARK_MODE=NO
-```
- 
+`driver/release/` 保留上游自带的发布文件，其中预编译模块不是本工程针对当前飞牛内核的构建产物；
+热点管理脚本使用 `./build.sh` 生成的 `build/<内核版本>/mt7603usta.ko`。

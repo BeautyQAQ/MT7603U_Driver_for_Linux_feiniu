@@ -1,0 +1,26 @@
+diff --git a/Makefile b/Makefile
+index a381ef7..803db5b 100755
+--- a/Makefile
++++ b/Makefile
+@@ -246,7 +246,7 @@ else
+ #build mt7603usta.ko
+ ifeq ($(DARK_MODE),NO)
+ 	echo "Dark mode disabled"
+-	sed -i '1s/#define/\/\/#define/g'  common/rtusb_dev_id.c
++	sed -i '1c\//#define Fantasy DDFantasies' common/rtusb_dev_id.c
+ endif
+ 	MODULE_FLAGS="$(WFLAGS)"
+ 	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(LINUX_SRC) M=$(RT28xx_DIR)/os/linux modules
+diff --git a/os/linux/cfg80211/cfg80211.c b/os/linux/cfg80211/cfg80211.c
+index 1cb39b8..0e4c452 100755
+--- a/os/linux/cfg80211/cfg80211.c
++++ b/os/linux/cfg80211/cfg80211.c
+@@ -400,7 +400,7 @@ static int CFG80211_OpsChannelSet(
+ 
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0))
+ static int CFG80211_OpsMonitorChannelSet(struct wiphy *pWiphy,
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0))
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0))
+ 					 struct net_device *dev,
+ #endif
+ 					 struct cfg80211_chan_def *chandef)
