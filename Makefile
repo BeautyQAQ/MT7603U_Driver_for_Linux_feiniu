@@ -246,7 +246,7 @@ else
 #build mt7603usta.ko
 ifeq ($(DARK_MODE),NO)
 	echo "Dark mode disabled"
-	sed -i '1s/#define/\/\/#define/g'  common/rtusb_dev_id.c
+	sed -i '1c\//#define Fantasy DDFantasies' common/rtusb_dev_id.c
 endif
 	MODULE_FLAGS="$(WFLAGS)"
 	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(LINUX_SRC) M=$(RT28xx_DIR)/os/linux modules

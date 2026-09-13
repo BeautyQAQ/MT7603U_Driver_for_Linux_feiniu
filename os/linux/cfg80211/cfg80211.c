@@ -400,7 +400,7 @@ static int CFG80211_OpsChannelSet(
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0))
 static int CFG80211_OpsMonitorChannelSet(struct wiphy *pWiphy,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0))
 					 struct net_device *dev,
 #endif
 					 struct cfg80211_chan_def *chandef)
