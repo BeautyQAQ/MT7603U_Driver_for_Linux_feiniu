@@ -9,6 +9,7 @@ import sys
 import time
 from common import BASE, UNIT, LEGACY_UNIT, cmd, load_config, check_driver, find_adapter
 from hotspot import run, save_status
+from network import check_proxy
 
 STATE = BASE / 'state'
 
@@ -22,7 +23,7 @@ def read_status():
 def preflight():
     config = load_config()
     module, vermagic = check_driver()
-    for tool in ['ip', 'nmcli', 'nft', 'iptables', 'dnsmasq', 'modprobe', 'insmod', 'rmmod',
+    for tool in ['ip', 'nmcli', 'nft', 'iptables', 'ip6tables', 'dnsmasq', 'modprobe', 'insmod', 'rmmod',
                  'systemd-run', 'systemctl', 'udevadm', 'busctl']:
         if not shutil.which(tool):
             raise RuntimeError(f'缺少命令：{tool}')
@@ -31,6 +32,7 @@ def preflight():
             raise RuntimeError(f'{binary} 缺少动态库。')
     if not (Path('/sys/class/net') / config['uplink']).exists():
         raise RuntimeError('配置的有线出口不存在，请修改 config/hotspot.ini。')
+    check_proxy(config)
     return config, module, vermagic
 
 def ensure_driver(module):
@@ -155,6 +157,8 @@ def main():
         return
     if action == 'check':
         config, module, vermagic = preflight()
+        print('网络模式：' + ('有线直连' if config['bypass_mihomo'] else 'Mihomo TUN（按现有规则分流）'))
+        print('DHCP 下发 DNS：' + config['dns'])
         print(f'配置有效；SSID：{config["ssid"]}\n当前内核：{os.uname().release}\n驱动：{module}\nvermagic：{vermagic}\n检查通过（只读，不加载驱动、不修改网络）。')
         if Path('/sys/module/mt7603usta').exists():
             print('已识别无线接口：' + find_adapter())

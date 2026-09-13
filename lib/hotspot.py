@@ -10,6 +10,7 @@ import sys
 import time
 
 from common import BASE, UNIT, cmd, load_config, find_adapter, check_driver
+from network import check_proxy, network_changes
 RUN = Path('/run/nas-wifi')
 TAG = 'nas-wifi'
 LOG = BASE / 'logs'
@@ -31,6 +32,7 @@ def private_file(path, content):
 def run():
     config = load_config()
     check_driver()
+    check_proxy(config)
     IFACE = find_adapter()
     UPLINK = config['uplink']
     if UPLINK == IFACE:
@@ -126,26 +128,14 @@ user=nobody
                  '/fi/w1/wpa_supplicant1', 'fi.w1.wpa_supplicant1', 'GetInterface', 's', IFACE], check=False))
         change(['ip', 'address', 'add', ADDRESS, 'dev', IFACE],
                ['ip', 'address', 'del', ADDRESS, 'dev', IFACE])
-        # Only this test interface/subnet uses the ordinary wired routing table.
-        change(['ip', 'rule', 'add', 'priority', '8000', 'iif', IFACE, 'lookup', 'main'],
-               ['ip', 'rule', 'del', 'priority', '8000', 'iif', IFACE, 'lookup', 'main'])
-        change(['ip', 'rule', 'add', 'priority', '8001', 'to', SUBNET, 'lookup', 'main'],
-               ['ip', 'rule', 'del', 'priority', '8001', 'to', SUBNET, 'lookup', 'main'])
         nft_tables = json.loads(cmd(['nft', '-j', 'list', 'tables']))
         if config['bypass_mihomo'] and any(x.get('table', {}).get('name') == 'mihomo' and x['table']['family'] == 'inet'
                for x in nft_tables['nftables']):
             undo.append(remove_proxy_exception)
             cmd(['nft', 'insert', 'rule', 'inet', 'mihomo', 'prerouting',
                  'iifname', IFACE, 'counter', 'return', 'comment', f'"{TAG}"'])
-        for table, chain, spec in [
-            ('filter', 'FORWARD', ['-i', IFACE, '-o', UPLINK, '-s', SUBNET, '-j', 'ACCEPT']),
-            ('filter', 'FORWARD', ['-i', UPLINK, '-o', IFACE, '-d', SUBNET,
-                                   '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED', '-j', 'ACCEPT']),
-            ('nat', 'POSTROUTING', ['-s', SUBNET, '-o', UPLINK, '-j', 'MASQUERADE']),
-        ]:
-            spec = ['-m', 'comment', '--comment', TAG] + spec
-            change(['iptables', '-w', '5', '-t', table, '-I', chain, '1'] + spec,
-                   ['iptables', '-w', '5', '-t', table, '-D', chain] + spec)
+        for forward, backward in network_changes(config, IFACE):
+            change(forward, backward)
         for name, args in [
             ('hostapd', [str(BASE / 'bin/hostapd'), str(RUN / 'hostapd.conf')]),
             ('dnsmasq', ['dnsmasq', '--keep-in-foreground', f'--conf-file={RUN}/dnsmasq.conf']),
@@ -160,6 +150,8 @@ user=nobody
             status = cmd([BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'status'], check=False)
             stations = cmd([BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'all_sta'], check=False)
             save_status(state='running' if 'state=ENABLED' in status else 'initializing',
+                        network_mode='direct' if config['bypass_mihomo'] else 'mihomo',
+                        dns=config['dns'],
                         ap=status, stations=stations, leases=leases.read_text(),
                         interface=cmd([BASE / 'bin/iw', 'dev', IFACE, 'info'], check=False))
             if time.monotonic() - started > 30 and 'state=ENABLED' not in status:

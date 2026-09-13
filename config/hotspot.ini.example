@@ -10,6 +10,10 @@ uplink = enp1s0
 address = 192.168.77.1/24
 dhcp_start = 192.168.77.100
 dhcp_end = 192.168.77.120
-dns = 192.168.4.1
-# true: 仅热点流量跳过 Mihomo 重定向，通过有线口直接共享网络。
-bypass_mihomo = true
+# Mihomo TUN 必须启用 any:53 和 tcp://any:53 的 DNS 劫持。
+# 此地址是劫持目标，由 Mihomo DNS 实际解析；不要填写热点网关。
+dns = 1.1.1.1
+# false: 接入现有 Mihomo TUN；true: 跳过 Mihomo，通过有线口直连。
+bypass_mihomo = false
+mihomo_tun = Meta
+mihomo_table = 2022
