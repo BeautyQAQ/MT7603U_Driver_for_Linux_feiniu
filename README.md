@@ -1,7 +1,11 @@
 # 飞牛 NAS / 360 随身 WiFi 热点
 
-本仓库包含驱动源码和飞牛 NAS 热点管理工具。本机工程目录为 `/home/ubuntu/project/nas-wifi`，
-克隆到其他目录也可以使用。
+本仓库基于 [Looong01/MT7603U_Driver_for_Linux](https://github.com/Looong01/MT7603U_Driver_for_Linux)，
+包含驱动源码和飞牛 NAS 热点管理工具。克隆到任意目录均可使用；下文
+`/home/ubuntu/project/nas-wifi` 是本机路径示例，请替换为自己的克隆目录。
+
+目录职责、源码差异及维护约定见 [项目结构与维护](docs/maintenance.md)，
+已有测试结果见 [历史验证记录](docs/validation.md)。
 
 设备为 **MT7603U / USB 0e8d:760c**。已在飞牛 `6.18.18.c1032-trim` 上完成驱动加载、
 WPA2 热点、手机获取 DHCP 地址和上网验证。源码、补丁、编译目录、产物和运行工具都保存在
@@ -191,7 +195,7 @@ sudo ./start.sh
 
 ```text
 build/<内核版本>/mt7603usta.ko  驱动模块
-build/<内核版本>/build.json    内核版本、源码提交、补丁摘要和产物校验值
+build/<内核版本>/build.json    内核版本、仓库提交、驱动未提交差异摘要和产物校验值
 build/<内核版本>/build.log     编译日志
 build/<内核版本>/work-*/       此次编译使用的独立工作目录
 ```
@@ -211,11 +215,13 @@ sudo ./start.sh
 | 路径 | 内容 |
 |---|---|
 | `driver/` | 保留上游内容并应用兼容性修正的驱动源码；与热点工具由根目录 Git 仓库统一管理 |
-| `patches/local-driver.patch` | Linux 6.13+ 监听信道回调兼容修正、重复编译的 ID 配置修正 |
+| `patches/local-driver.patch` | 已合入 `driver/` 的两项修正记录，无需再次应用；见 [补丁说明](patches/README.md) |
 | `firmware/` | 已验证使用的驱动配置文件和固件 |
 | `bin/` | Debian 12 amd64 的 iw、hostapd、hostapd_cli；使用系统动态库 |
 | `lib/` | 配置检查、编译、驱动加载和热点管理代码 |
 | `config/` | 用户配置和模板 |
+| `docs/` | 项目结构、维护约定与历史验证记录 |
+| `build/` | 按内核隔离的本地构建产物、日志和工作目录，不提交到 Git |
 | `logs/` | hostapd、dnsmasq 及失败诊断日志 |
 | `state/` | 当前/最近运行状态和本工程创建的固件记录 |
 | `tests/` | 无需 root、不会修改网络的检查测试 |
@@ -226,14 +232,11 @@ sudo ./start.sh
 `unload.sh` 只删除由本工程创建且内容未变的 `/lib/firmware` 文件；之前测试已经安装的
 同名相同固件会复用而不覆盖，原有文件不会被本工程误删。工程文件本身会保留。
 
-## 验证记录与限制
+## 验证与限制
 
-- 旧临时测试：2026-09-13 手机完成 WPA2 认证，获取 `192.168.77.104`，用户确认上网可用。
-- 本工程：已从持久目录重新编译当前内核模块，直连热点服务正在运行。
-- Mihomo 改造：21 项自动检查及当前内核/TUN 预检查通过；NAS 的 DNS 查询已验证由 Mihomo
-  劫持并返回 Fake-IP。手机通过改造后的热点上网仍需重启热点后验证。
-- 当前执行账号无免密 sudo，用户需在 NAS 终端执行 `sudo ./restart.sh` 应用代理模式，
-  密码仅应输入 NAS 终端。
+历史测试环境、结果和待验证事项见 [历史验证记录](docs/validation.md)。
+这些记录不代表当前热点状态；查看当前状态请执行 `./status.sh`。
+
 - 没有做一天稳定性测试，也没有进行 NAS 重启测试或设置开机启动。
 - 第三方模块运行于内核中，崩溃可能影响整台 NAS；用户已确认可以接受测试风险并手动重启。
   手动启动模式下重启不会自动加载它，但不能保证正在写入的数据不受崩溃影响。
