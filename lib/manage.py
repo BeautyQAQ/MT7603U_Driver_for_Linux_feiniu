@@ -157,7 +157,7 @@ def main():
         return
     if action == 'check':
         config, module, vermagic = preflight()
-        print('网络模式：' + ('有线直连' if config['bypass_mihomo'] else 'Mihomo TUN（按现有规则分流）'))
+        print('网络模式：' + ('有线直连' if config['bypass_mihomo'] else '普通网关（Mihomo 分流，停止后允许直连）'))
         print('DHCP 下发 DNS：' + config['dns'])
         print(f'配置有效；SSID：{config["ssid"]}\n当前内核：{os.uname().release}\n驱动：{module}\nvermagic：{vermagic}\n检查通过（只读，不加载驱动、不修改网络）。')
         if Path('/sys/module/mt7603usta').exists():

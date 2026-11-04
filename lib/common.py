@@ -59,8 +59,8 @@ def load_config(path=None):
         raise ValueError('Mihomo TUN 接口名称无效，或与有线出口相同。')
     if not 1 <= table <= 4294967295 or table in (253, 254, 255):
         raise ValueError('Mihomo 路由表编号无效。')
-    if not bypass and any(not ipaddress.IPv4Address(x).is_global for x in dns):
-        raise ValueError('Mihomo 模式请使用公网 DNS 地址（如 1.1.1.1），由 TUN 劫持解析；不要填写热点网关或局域网 DNS。')
+    if str(address.ip) in dns:
+        raise ValueError('热点网关未提供 DNS 服务，请填写实际可用的 DNS 服务器。')
     return dict(ssid=ssid, password=password, channel=channel, uplink=uplink,
                 address=str(address), subnet=str(net), gateway=str(address.ip),
                 mask=str(net.netmask), dhcp_start=str(start), dhcp_end=str(end), dns=','.join(dns),

@@ -1,29 +1,27 @@
 """Hotspot-only routing and forwarding; leave Mihomo's own policy intact."""
-import ipaddress
 import json
 
 from common import cmd
 
-PRIVATE_NETWORKS = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')
-
-
 def check_proxy(config):
+    """Report proxy readiness without making it a hotspot startup dependency."""
     if config['bypass_mihomo']:
         return
-    tun = config['mihomo_tun']
-    links = json.loads(cmd(['ip', '-j', 'link', 'show', 'dev', tun]))
-    if not links or 'UP' not in links[0].get('flags', []):
-        raise RuntimeError(f'Mihomo TUN 接口 {tun} 未启用；请先启动 Mihomo。')
-    table = str(config['mihomo_table'])
-    rules = json.loads(cmd(['ip', '-j', '-4', 'rule']))
-    if not any(str(r.get('table')) == table for r in rules):
-        raise RuntimeError(f'没有 Mihomo 路由表 {table} 的策略规则，请检查 auto-route。')
-    routes = json.loads(cmd(['ip', '-j', '-4', 'route', 'show', 'table', table]))
-    networks = [ipaddress.ip_network(r.get('dst', 'default').replace('default', '0.0.0.0/0'))
-                for r in routes if r.get('dev') == tun and r.get('type', 'unicast') == 'unicast']
-    if not networks or any(not any(ipaddress.ip_address(dns) in net for net in networks)
-                           for dns in config['dns'].split(',')):
-        raise RuntimeError('Mihomo TUN 路由未覆盖配置的 DNS 地址，请检查 auto-route 和排除网段。')
+    try:
+        tun = config['mihomo_tun']
+        links = json.loads(cmd(['ip', '-j', 'link', 'show', 'dev', tun]))
+        if not links or 'UP' not in links[0].get('flags', []):
+            raise RuntimeError(f'Mihomo TUN 接口 {tun} 未启用。')
+        table = str(config['mihomo_table'])
+        rules = json.loads(cmd(['ip', '-j', '-4', 'rule']))
+        if not any(str(r.get('table')) == table for r in rules):
+            raise RuntimeError(f'没有 Mihomo 路由表 {table} 的策略规则。')
+        routes = json.loads(cmd(['ip', '-j', '-4', 'route', 'show', 'table', table]))
+        if not any(r.get('dev') == tun and r.get('type', 'unicast') == 'unicast'
+                   for r in routes):
+            raise RuntimeError('Mihomo 路由表没有可用的 TUN 路由。')
+    except RuntimeError as exc:
+        print(f'提示：{exc} 热点仍可启动，流量按当前系统路由转发。', flush=True)
 
 
 def network_changes(config, iface):
@@ -36,21 +34,16 @@ def network_changes(config, iface):
     spec = ['priority', '8001', 'to', subnet, 'lookup', 'main']
     yield ['ip', 'rule', 'add'] + spec, ['ip', 'rule', 'del'] + spec
 
-    forwards = []
-    if config['bypass_mihomo']:
-        forwards.append(['-i', iface, '-o', uplink, '-s', subnet, '-j', 'ACCEPT'])
-    else:
-        # Prevent public traffic falling back to the wired gateway if TUN stops.
-        # The LAN exceptions below are inserted ahead of this rejection.
-        forwards.append(['-i', iface, '-o', uplink, '-s', subnet, '-j', 'REJECT'])
-        for private in PRIVATE_NETWORKS:
-            forwards.append(['-i', iface, '-o', uplink, '-s', subnet, '-d', private, '-j', 'ACCEPT'])
+    # Ordinary gateway forwarding: Mihomo owns capture and traffic selection.
+    # Destinations it excludes, and traffic after a clean proxy stop, use uplink.
+    forwards = [['-i', iface, '-o', uplink, '-s', subnet, '-j', 'ACCEPT']]
+    if not config['bypass_mihomo']:
         forwards.extend([
             ['-i', iface, '-o', config['mihomo_tun'], '-s', subnet, '-j', 'ACCEPT'],
             ['-i', config['mihomo_tun'], '-o', iface, '-d', subnet,
              '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED', '-j', 'ACCEPT'],
         ])
-        # This hotspot supplies IPv4 DHCP only; do not leak forwarded IPv6.
+        # This hotspot supplies IPv4 DHCP only; keep forwarded IPv6 disabled.
         spec = ['-m', 'comment', '--comment', 'nas-wifi', '-i', iface, '-j', 'REJECT']
         yield ['ip6tables', '-w', '5', '-I', 'FORWARD', '1'] + spec, \
               ['ip6tables', '-w', '5', '-D', 'FORWARD'] + spec

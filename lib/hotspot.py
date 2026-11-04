@@ -150,7 +150,7 @@ user=nobody
             status = cmd([BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'status'], check=False)
             stations = cmd([BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'all_sta'], check=False)
             save_status(state='running' if 'state=ENABLED' in status else 'initializing',
-                        network_mode='direct' if config['bypass_mihomo'] else 'mihomo',
+                        network_mode='direct' if config['bypass_mihomo'] else 'gateway',
                         dns=config['dns'],
                         ap=status, stations=stations, leases=leases.read_text(),
                         interface=cmd([BASE / 'bin/iw', 'dev', IFACE, 'info'], check=False))
