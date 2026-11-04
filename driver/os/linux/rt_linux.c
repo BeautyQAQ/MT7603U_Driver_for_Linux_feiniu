@@ -37,6 +37,10 @@
 #include "dot11i_wpa.h"
 #include <linux/rtnetlink.h>
 
+#ifdef RT_CFG80211_SUPPORT
+MODULE_INFO(nas_wifi_netns, "1");
+#endif
+
 #ifdef CONFIG_TRACE_SUPPORT
 #define CREATE_TRACE_POINTS
 #include "os/trace_linux.h"
@@ -2044,6 +2048,12 @@ int RtmpOSNetDevAttach(
 #else
 	pNetDev->validate_addr = NULL;
 #endif
+#endif
+
+	/* Auxiliary cfg80211 interfaces must follow their wiphy's namespace too. */
+#ifdef RT_CFG80211_SUPPORT
+	if (pNetDev->ieee80211_ptr)
+		dev_net_set(pNetDev, wiphy_net(pNetDev->ieee80211_ptr->wiphy));
 #endif
 
 	if (rtnl_locked)

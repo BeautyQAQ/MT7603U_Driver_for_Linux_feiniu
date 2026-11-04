@@ -52,6 +52,55 @@ sudo ./unload.sh     # 关闭热点并卸载驱动，不强制卸载使用中的
 卸载时会让 NetworkManager 释放该网卡再关闭接口；不使用强制卸载。
 如果驱动仍被占用或卸载失败，脚本会报告错误，不伪报成功。
 
+## 从飞牛网络设置隐藏热点网卡
+
+飞牛可能把热点接口（如 `wlx000000000000`）显示成一张正在“连接中”的无线网卡。
+该接口就是发射热点所用的网卡；热点运行时已由 hostapd 管理，不由 NetworkManager 连接其他 WiFi。
+如果希望网络设置中也不出现这一行，在本地 `config/hotspot.ini` 的 `[wifi]` 中加入：
+
+```ini
+[wifi]
+# 保留原有名称、密码和信道
+hide_from_nas = true
+```
+
+首次启用需要编译并重新加载带网络空间兼容修正的驱动：
+
+```bash
+./build.sh
+sudo ./unload.sh
+sudo ./start.sh
+./status.sh
+```
+
+重载期间热点设备会短暂断线。之后刷新飞牛的网络设置页面。
+状态中的 `wireless_namespace` 为 `nas-wifi-ap`，`forward_interface` 为 `nwifi-host` 时，
+表示热点已使用隐藏模式；热点名称、密码、网关、DHCP 和客户端 DNS 沿用原配置。
+首次切换后还需验证设备重新获取地址、实际上网，以及需要时的 Mihomo 分流。
+
+隐藏模式把无线设备和 hostapd、DHCP 服务放到独立网络空间，再经虚拟接口回到 NAS 转发。
+客户端来源地址保留到主机侧，继续使用原有 NAT 和 Mihomo 规则；如果自行按无线接口名称配置过
+Mihomo 的接口白名单，需改为主机转发接口 `nwifi-host`。
+内部连接使用 `169.254.77.0/30`，启动前会检查网段和资源名称冲突。
+驱动缺少修正或内存中仍加载旧版本时，预检查会要求重新编译/重载，避免直接切换。
+
+此选项默认关闭，未配置它的旧配置仍使用原有路径。设为 `false` 后运行 `sudo ./restart.sh`
+可恢复显示。正常停止隐藏模式时，脚本会先结束热点进程、撤销规则，再把无线设备移回主机并
+清理虚拟接口和网络空间；因此只停止热点后，无线网卡会重新出现在飞牛中。
+
+### 隐藏模式恢复说明
+
+如果启动失败但 `cleanup_errors` 为空，网卡已恢复，可将此选项设回 `false` 后重新启动。
+如果停止报告清理错误，或提示网络空间 `nas-wifi-ap` 尚未清理，先保留 `state/` 和 `logs/`，
+查看 `./status.sh`、`logs/hotspot-error.log`，以及：
+
+```bash
+sudo ip netns exec nas-wifi-ap ./bin/iw dev
+```
+
+无线设备移回失败时会保留网络空间，便于继续恢复；此时脚本拒绝重复启动或卸载驱动。
+不要直接删除仍包含无线设备的网络空间或清空状态文件，应根据清理错误恢复设备和残留规则。
+
 ## USB 网卡拔出与重新插入
 
 正常操作顺序是：**停止热点并卸载驱动 → 拔出 USB → 重新插入 USB → 手动启动热点**。
@@ -217,7 +266,7 @@ sudo ./start.sh
 | 路径 | 内容 |
 |---|---|
 | `driver/` | 保留上游内容并应用兼容性修正的驱动源码；与热点工具由根目录 Git 仓库统一管理 |
-| `patches/local-driver.patch` | 已合入 `driver/` 的两项修正记录，无需再次应用；见 [补丁说明](patches/README.md) |
+| `patches/local-driver.patch` | 已合入 `driver/` 的三项修正记录，无需再次应用；见 [补丁说明](patches/README.md) |
 | `firmware/` | 已验证使用的驱动配置文件和固件 |
 | `bin/` | Debian 12 amd64 的 iw、hostapd、hostapd_cli；使用系统动态库 |
 | `lib/` | 配置检查、编译、驱动加载和热点管理代码 |

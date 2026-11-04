@@ -27,7 +27,7 @@ nas-wifi/
 ```
 
 根目录的七个 shell 脚本都是很薄的入口，保留现有 `./start.sh` 等命令方便日常操作。
-`lib/` 当前只有五个 Python 文件，现阶段没有必要增加 Python 打包层。
+`lib/` 当前只有六个 Python 文件，现阶段没有必要增加 Python 打包层。
 本机还有一个空的 `scripts/` 目录，未被 Git 跟踪、无代码引用，也不是克隆后的必要结构；
 后续维护脚本确有需要时再使用它。
 
@@ -42,6 +42,10 @@ nas-wifi/
 仅 `Makefile` 和 `os/linux/cfg80211/cfg80211.c` 两个文件发生内容变化。
 这两项变化已记录在 [local-driver.patch](../patches/local-driver.patch)。
 该比较未核实远端最新提交。
+
+2026-11-04 增加 `os/linux/rt_linux.c` 的网络空间修正：cfg80211 辅助接口注册时使用对应
+wiphy 的网络空间，并声明 `nas_wifi_netns=1` 模块元数据。隐藏模式要求产物包含此标记，
+且已加载模块的源码版本与产物相同；相关差异也记录在上述补丁中。
 
 维护时以 `driver/` 为实际编译源码，同时更新补丁记录与基础提交说明。
 构建流程不会自动应用 `patches/` 下的文件，具体约定见 [补丁说明](../patches/README.md)。
@@ -84,6 +88,17 @@ nas-wifi/
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+修改隐藏模式或转发路径后，还应运行：
+
+```bash
+python3 tests/integration_isolation.py
+```
+
+此测试自行用 `unshare` 创建新的用户、网络和挂载空间，用虚拟网卡模拟无线设备、客户端和
+有线出口，验证来源地址、NAT、接口隐藏及部分失败的恢复；无需 sudo，也不接触真实无线设备。
+运行主机需允许用户网络空间并提供 iproute2、iptables、sysctl、ping 等工具。
+这不能替代真实 USB 驱动移动、hostapd、DHCP、飞牛页面和 Mihomo 的实际切换验证。
 
 修改驱动或构建路径后，在具备匹配内核 headers 的主机执行 `./build.sh` 和 `./check.sh`。
 自动测试通过不能替代驱动加载、手机 DHCP 和实际出站验证；实际验证结果归档到

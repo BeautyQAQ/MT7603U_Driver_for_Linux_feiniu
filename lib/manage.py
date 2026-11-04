@@ -7,9 +7,10 @@ from pathlib import Path
 import shutil
 import sys
 import time
-from common import BASE, UNIT, LEGACY_UNIT, cmd, load_config, check_driver, find_adapter
+from common import BASE, UNIT, LEGACY_UNIT, cmd, load_config, check_driver, check_namespace_driver, find_adapter
 from hotspot import run, save_status
 from network import check_proxy
+from isolation import NAMESPACE, NAMESPACE_PATH, HOST_IFACE, check_available, check_transit
 
 STATE = BASE / 'state'
 
@@ -32,6 +33,14 @@ def preflight():
             raise RuntimeError(f'{binary} 缺少动态库。')
     if not (Path('/sys/class/net') / config['uplink']).exists():
         raise RuntimeError('配置的有线出口不存在，请修改 config/hotspot.ini。')
+    if config['hide_from_nas']:
+        check_namespace_driver(module)
+        if not shutil.which('sysctl'):
+            raise RuntimeError('缺少命令：sysctl')
+        running = active(UNIT) and NAMESPACE_PATH.exists()
+        check_transit(config, json.loads(cmd(['ip', '-j', '-4', 'route', 'show', 'table', 'main'])), running)
+        if not active(UNIT):
+            check_available()
     check_proxy(config)
     return config, module, vermagic
 
@@ -89,6 +98,10 @@ def start():
     previous = read_status()
     if previous.get('cleanup_errors'):
         raise RuntimeError('上一次停止存在清理错误，请先检查 state/hotspot-status.json，避免重复添加规则。')
+    # A leftover hidden AP must be recovered before looking for a host-side
+    # adapter, even if the edited configuration has turned hiding off.
+    if NAMESPACE_PATH.exists():
+        raise RuntimeError(f'网络空间 {NAMESPACE} 尚未清理；请检查 README 的隐藏模式恢复说明。')
     ensure_driver(module)
     find_adapter()
     save_status(state='requested')
@@ -114,6 +127,8 @@ def stop():
     data = read_status()
     if data.get('cleanup_errors'):
         raise RuntimeError('热点已停止，但存在清理错误：' + json.dumps(data['cleanup_errors'], ensure_ascii=False))
+    if NAMESPACE_PATH.exists():
+        raise RuntimeError(f'热点进程已停止，但网络空间 {NAMESPACE} 尚未清理；请检查 README 的隐藏模式恢复说明。')
     print('热点已关闭。本工程添加的运行时规则由后台进程撤销；驱动仍在内存中。')
 
 def unload():
@@ -159,9 +174,13 @@ def main():
         config, module, vermagic = preflight()
         print('网络模式：' + ('有线直连' if config['bypass_mihomo'] else '普通网关（Mihomo 分流，停止后允许直连）'))
         print('DHCP 下发 DNS：' + config['dns'])
+        print('隐藏无线网卡：' + ('已配置（独立网络空间）' if config['hide_from_nas'] else '未配置'))
         print(f'配置有效；SSID：{config["ssid"]}\n当前内核：{os.uname().release}\n驱动：{module}\nvermagic：{vermagic}\n检查通过（只读，不加载驱动、不修改网络）。')
         if Path('/sys/module/mt7603usta').exists():
-            print('已识别无线接口：' + find_adapter())
+            if active(UNIT) and NAMESPACE_PATH.exists():
+                print(f'热点接口当前位于网络空间 {NAMESPACE}；主机转发接口：{HOST_IFACE}。详细状态见 ./status.sh。')
+            else:
+                print('已识别无线接口：' + find_adapter())
         return
     if os.geteuid() != 0:
         raise RuntimeError('启停或加载驱动需要 root，请在 NAS 终端用 sudo 执行对应脚本。')

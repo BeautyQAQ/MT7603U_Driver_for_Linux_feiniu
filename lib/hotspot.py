@@ -9,8 +9,9 @@ import subprocess
 import sys
 import time
 
-from common import BASE, UNIT, cmd, load_config, find_adapter, check_driver
+from common import BASE, UNIT, cmd, load_config, find_adapter, check_driver, check_namespace_driver
 from network import check_proxy, network_changes
+from isolation import HotspotNamespace, HOST_IFACE, NAMESPACE
 RUN = Path('/run/nas-wifi')
 TAG = 'nas-wifi'
 LOG = BASE / 'logs'
@@ -31,7 +32,9 @@ def private_file(path, content):
 
 def run():
     config = load_config()
-    check_driver()
+    module, _ = check_driver()
+    if config['hide_from_nas']:
+        check_namespace_driver(module)
     check_proxy(config)
     IFACE = find_adapter()
     UPLINK = config['uplink']
@@ -45,6 +48,9 @@ def run():
     stopping = False
     failure = None
     created_run = False
+    isolation = None
+    wireless_prefix = []
+    forward_iface = IFACE
     def stop_signal(*_):
         nonlocal stopping
         stopping = True
@@ -115,8 +121,22 @@ user=nobody
 ''')
         cmd(['dnsmasq', '--test', f'--conf-file={RUN}/dnsmasq.conf'])
         old_managed = cmd(['nmcli', '-g', 'GENERAL.NM-MANAGED', 'device', 'show', IFACE])
+
+        def restore_management():
+            # Moving the wiphy back creates a new NM device asynchronously;
+            # its interface name can also be reassigned by udev/the NAS.
+            for attempt in range(10):
+                try:
+                    iface = find_adapter() if isolation else IFACE
+                    cmd(['nmcli', 'device', 'set', iface, 'managed', old_managed])
+                    return
+                except RuntimeError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(1)
+
         change(['nmcli', 'device', 'set', IFACE, 'managed', 'no'],
-               ['nmcli', 'device', 'set', IFACE, 'managed', old_managed])
+               restore_management)
         # NetworkManager removes its supplicant interface asynchronously. Allow
         # that teardown to finish before hostapd changes the interface to AP.
         time.sleep(5)
@@ -126,15 +146,22 @@ user=nobody
             cmd([BASE / 'bin/iw', 'dev']) + '\n' +
             cmd(['busctl', '--system', '--timeout=3s', 'call', 'fi.w1.wpa_supplicant1',
                  '/fi/w1/wpa_supplicant1', 'fi.w1.wpa_supplicant1', 'GetInterface', 's', IFACE], check=False))
-        change(['ip', 'address', 'add', ADDRESS, 'dev', IFACE],
-               ['ip', 'address', 'del', ADDRESS, 'dev', IFACE])
+        if config['hide_from_nas']:
+            phy = (Path('/sys/class/net') / IFACE / 'phy80211').resolve().name
+            isolation = HotspotNamespace(IFACE, phy, config)
+            undo.append(isolation.close)
+            isolation.start()
+            wireless_prefix = isolation.prefix
+            forward_iface = HOST_IFACE
+        change(wireless_prefix + ['ip', 'address', 'add', ADDRESS, 'dev', IFACE],
+               wireless_prefix + ['ip', 'address', 'del', ADDRESS, 'dev', IFACE])
         nft_tables = json.loads(cmd(['nft', '-j', 'list', 'tables']))
         if config['bypass_mihomo'] and any(x.get('table', {}).get('name') == 'mihomo' and x['table']['family'] == 'inet'
                for x in nft_tables['nftables']):
             undo.append(remove_proxy_exception)
             cmd(['nft', 'insert', 'rule', 'inet', 'mihomo', 'prerouting',
-                 'iifname', IFACE, 'counter', 'return', 'comment', f'"{TAG}"'])
-        for forward, backward in network_changes(config, IFACE):
+                 'iifname', forward_iface, 'counter', 'return', 'comment', f'"{TAG}"'])
+        for forward, backward in network_changes(config, forward_iface):
             change(forward, backward)
         for name, args in [
             ('hostapd', [str(BASE / 'bin/hostapd'), str(RUN / 'hostapd.conf')]),
@@ -142,18 +169,20 @@ user=nobody
         ]:
             logfile = open(LOG / f'{name}.log', 'w')
             logfiles.append(logfile)
-            children.append(subprocess.Popen(args, stdout=logfile, stderr=subprocess.STDOUT))
+            children.append(subprocess.Popen(wireless_prefix + args, stdout=logfile, stderr=subprocess.STDOUT))
         started = time.monotonic()
         while not stopping:
             if any(p.poll() is not None for p in children):
                 raise RuntimeError('A hotspot process exited; inspect logs/hostapd.log and logs/dnsmasq.log.')
-            status = cmd([BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'status'], check=False)
-            stations = cmd([BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'all_sta'], check=False)
+            status = cmd(wireless_prefix + [BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'status'], check=False)
+            stations = cmd(wireless_prefix + [BASE / 'bin/hostapd_cli', '-p', RUN / 'control', '-i', IFACE, 'all_sta'], check=False)
             save_status(state='running' if 'state=ENABLED' in status else 'initializing',
                         network_mode='direct' if config['bypass_mihomo'] else 'gateway',
+                        wireless_namespace=NAMESPACE if isolation else None,
+                        forward_interface=forward_iface,
                         dns=config['dns'],
                         ap=status, stations=stations, leases=leases.read_text(),
-                        interface=cmd([BASE / 'bin/iw', 'dev', IFACE, 'info'], check=False))
+                        interface=cmd(wireless_prefix + [BASE / 'bin/iw', 'dev', IFACE, 'info'], check=False))
             if time.monotonic() - started > 30 and 'state=ENABLED' not in status:
                 raise RuntimeError('AP did not enable within 30 seconds.')
             for _ in range(5):
@@ -166,7 +195,8 @@ user=nobody
         (LOG / 'hotspot-error.log').write_text(traceback.format_exc())
         # Capture kernel and manager evidence before cleanup changes the mode.
         for name, args in [
-            ('wireless-failure.log', [str(BASE / 'bin/iw'), 'dev']),
+            ('wireless-failure.log', (isolation.prefix if isolation and isolation.created else []) +
+                                      [str(BASE / 'bin/iw'), 'dev']),
             ('kernel-ap-test.log', ['journalctl', '-k', '--since=-10min', '--no-pager', '-n', '700']),
             ('networkmanager-ap-test.log', ['journalctl', '-u', 'NetworkManager', '-u', 'wpa_supplicant',
                                            '--since=-10min', '--no-pager', '-n', '150']),
@@ -184,6 +214,7 @@ user=nobody
                     child.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     child.kill()
+                    child.wait(timeout=5)
         for f in logfiles:
             f.close()
         cleanup_errors = []

@@ -34,6 +34,16 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(c['ssid'], 'NAS测试')
         self.assertEqual(c['password'], 'secret%with#symbols')
 
+    def test_existing_configs_keep_the_visible_network_path(self):
+        self.assertFalse(self.parse(CONFIG)['hide_from_nas'])
+
+    def test_hidden_mode_can_be_explicitly_enabled(self):
+        self.assertTrue(self.parse(CONFIG.replace('[wifi]', '[wifi]\nhide_from_nas = true'))['hide_from_nas'])
+
+    def test_invalid_hidden_mode_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.parse(CONFIG.replace('[wifi]', '[wifi]\nhide_from_nas = maybe'))
+
     def test_reject_multiline_ssid_injection(self):
         with self.assertRaises(ValueError):
             self.parse(CONFIG.replace('ssid = NAS测试', 'ssid = NAS\n driver=other'))
@@ -59,6 +69,24 @@ class ConfigTests(unittest.TestCase):
             self.parse(CONFIG.replace('channel = 6', 'channel = 36'))
 
 class KernelGuards(unittest.TestCase):
+    def test_hidden_mode_rejects_driver_without_namespace_fix(self):
+        with patch.object(common, 'cmd', return_value=''):
+            with self.assertRaisesRegex(RuntimeError, '重新编译'):
+                common.check_namespace_driver(Path('/unused/module.ko'))
+
+    def test_hidden_mode_rejects_an_older_loaded_driver(self):
+        with patch.object(common, 'cmd', side_effect=['1', 'new-version']), \
+                patch.object(Path, 'exists', return_value=True), \
+                patch.object(Path, 'read_text', return_value='old-version'):
+            with self.assertRaisesRegex(RuntimeError, '重新加载'):
+                common.check_namespace_driver(Path('/unused/module.ko'))
+
+    def test_hidden_mode_accepts_matching_namespace_driver(self):
+        with patch.object(common, 'cmd', side_effect=['1', 'new-version']), \
+                patch.object(Path, 'exists', return_value=True), \
+                patch.object(Path, 'read_text', return_value='new-version\n'):
+            common.check_namespace_driver(Path('/unused/module.ko'))
+
     def test_old_kernel_module_rejected_before_loading(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'mt7603usta.ko'

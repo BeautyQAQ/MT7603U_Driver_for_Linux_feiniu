@@ -24,3 +24,19 @@ index 1cb39b8..0e4c452 100755
  					 struct net_device *dev,
  #endif
  					 struct cfg80211_chan_def *chandef)
+diff --git a/os/linux/rt_linux.c b/os/linux/rt_linux.c
+index c198948..357fe28 100755
+--- a/os/linux/rt_linux.c
++++ b/os/linux/rt_linux.c
+@@ -39,0 +40,4 @@
++#ifdef RT_CFG80211_SUPPORT
++MODULE_INFO(nas_wifi_netns, "1");
++#endif
++
+@@ -2048,0 +2053,6 @@ int RtmpOSNetDevAttach(
++	/* Auxiliary cfg80211 interfaces must follow their wiphy's namespace too. */
++#ifdef RT_CFG80211_SUPPORT
++	if (pNetDev->ieee80211_ptr)
++		dev_net_set(pNetDev, wiphy_net(pNetDev->ieee80211_ptr->wiphy));
++#endif
++

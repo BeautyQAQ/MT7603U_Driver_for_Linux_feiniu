@@ -1,5 +1,8 @@
 # 修改后运行 sudo ./restart.sh 生效；不要在值后追加行内注释。
 [wifi]
+# true：热点运行时从飞牛网络设置隐藏无线网卡；修改后需重启热点。
+# 缺省为 false，保持原有网络路径；名称、密码和 DHCP 配置不受影响。
+hide_from_nas = false
 ssid = FN-NAS-Test
 password = ChangeThisPassword
 channel = 6

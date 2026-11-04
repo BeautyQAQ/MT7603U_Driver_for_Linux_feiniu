@@ -38,6 +38,7 @@ def load_config(path=None):
     channel = c.getint('wifi', 'channel', fallback=6)
     if channel not in range(1, 12):
         raise ValueError('此工程仅配置 2.4 GHz 的信道 1–11。')
+    hide_from_nas = c.getboolean('wifi', 'hide_from_nas', fallback=False)
     uplink = c.get('network', 'uplink', fallback='enp1s0')
     if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,15}', uplink):
         raise ValueError('有线接口名称无效。')
@@ -61,7 +62,7 @@ def load_config(path=None):
         raise ValueError('Mihomo 路由表编号无效。')
     if str(address.ip) in dns:
         raise ValueError('热点网关未提供 DNS 服务，请填写实际可用的 DNS 服务器。')
-    return dict(ssid=ssid, password=password, channel=channel, uplink=uplink,
+    return dict(ssid=ssid, password=password, channel=channel, hide_from_nas=hide_from_nas, uplink=uplink,
                 address=str(address), subnet=str(net), gateway=str(address.ip),
                 mask=str(net.netmask), dhcp_start=str(start), dhcp_end=str(end), dns=','.join(dns),
                 bypass_mihomo=bypass, mihomo_tun=tun, mihomo_table=table)
@@ -85,6 +86,15 @@ def check_driver(kernel=None):
     if hashlib.sha256(module.read_bytes()).hexdigest() != manifest['sha256']:
         raise RuntimeError('驱动文件与构建记录不一致，请重新编译。')
     return module, vermagic
+
+def check_namespace_driver(module):
+    if cmd(['modinfo', '-F', 'nas_wifi_netns', module]) != '1':
+        raise RuntimeError('隐藏模式需要支持网络空间的驱动，请先运行 ./build.sh 重新编译。')
+    if Path('/sys/module/mt7603usta').exists():
+        loaded = Path('/sys/module/mt7603usta/srcversion')
+        expected = cmd(['modinfo', '-F', 'srcversion', module])
+        if not loaded.exists() or not expected or loaded.read_text().strip() != expected:
+            raise RuntimeError('隐藏模式需要重新加载新驱动；请先 sudo ./unload.sh，再 sudo ./start.sh。')
 
 def find_adapter():
     # The vendor driver reports usbcore as the module owner in sysfs; match the
